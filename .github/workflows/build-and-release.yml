@@ -1,0 +1,76 @@
+name: Build and Release
+on:
+  push:
+    paths:
+      - "release.yml"
+jobs:
+  build:
+    name: Build binaries for x86_64 and arm64
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        arch: [amd64, arm64]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Install yq
+        run: sudo apt-get install -y yq
+      - name: Load release info
+        id: release_info
+        run: |
+          VERSION=$(yq '.version' release.yml)
+          CHANGELOG=$(yq '.changelog' release.yml)
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+          echo "CHANGELOG=$CHANGELOG" >> $GITHUB_ENV
+      - name: Build binary
+        run: |
+          mkdir -p dist
+          GOOS=linux GOARCH=${{ matrix.arch }} go build -o dist/nixmkdoc-${{ matrix.arch }} ./...
+      - name: Upload artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: nixmkdoc-${{ matrix.arch }}
+          path: dist/nixmkdoc-${{ matrix.arch }}
+  release:
+    name: Create GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Download build artifacts
+        uses: actions/download-artifact@v3
+        with:
+          path: dist
+      - name: Create source tarball
+        run: |
+          mkdir -p dist
+          git archive --format=tar.gz -o dist/nixmkdoc-source-${{ env.VERSION }}.tar.gz HEAD
+      - name: Create GitHub Release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ env.VERSION }}
+          release_name: Release ${{ env.VERSION }}
+          body: ${{ env.CHANGELOG }}
+          draft: false
+          prerelease: false
+      - name: Upload binaries to release
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: dist/nixmkdoc-${{ matrix.arch }}
+          asset_name: nixmkdoc-${{ matrix.arch }}
+          asset_content_type: application/octet-stream
+      - name: Upload source tarball to release
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: dist/nixmkdoc-source-${{ env.VERSION }}.tar.gz
+          asset_name: nixmkdoc-source-${{ env.VERSION }}.tar.gz
+          asset_content_type: application/gzip
